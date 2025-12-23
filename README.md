@@ -14,10 +14,10 @@
 
 ## 🔍 安装方式
 - 安装 [Tampermonkey 插件](https://www.tampermonkey.net/)
-- 点击此处[安装脚本]() 或 [下载]()并手动导入
+- 点击此处[安装脚本](https://greasyfork.org/zh-CN/scripts/559978-bilitouch) 或 [下载](./BiliTouch.js)并手动导入
 
 ## 📕 开源许可证
 [MIT License](./LICENSE)
 
 ## 🤔 反馈或建议
-欢迎提交 [Issue]()
+欢迎提交 [Issue](https://github.com/RevenLiu/BiliTouch/issues)
