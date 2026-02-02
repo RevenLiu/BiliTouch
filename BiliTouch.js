@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliTouch
 // @namespace    https://github.com/RevenLiu
-// @version      1.0.0
+// @version      1.0.1
 // @description  一个为移动端打造的Web端B站网页播放器交互重构的篡改猴脚本。支持两侧滑动调节亮度与音量、横向滑动调节时间进度、单击显隐工具栏、双击播放/暂停。让网页版拥有原生 App 般的使用体验。
 // @author       RevenLiu
 // @license      MIT
@@ -134,6 +134,7 @@
         if (isGestureMoving && gestureMode === 'progress') {
             const v = document.querySelector('video');
             if (v) v.currentTime = targetTime;
+            gestureMode = null;
         }
         const hud = document.getElementById('gesture-hud');
         if (hud) hud.style.display = 'none';
