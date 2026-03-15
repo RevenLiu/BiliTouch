@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         BiliTouch
 // @namespace    https://github.com/RevenLiu
-// @version      1.0.1
-// @description  一个为移动端打造的Web端B站网页播放器交互重构的篡改猴脚本。支持两侧滑动调节亮度与音量、横向滑动调节时间进度、单击显隐工具栏、双击播放/暂停。让网页版拥有原生 App 般的使用体验。
+// @version      1.1.0
+// @description  一个为移动端打造的Web端B站网页播放器交互重构的篡改猴脚本。支持两侧滑动调节亮度与音量、横向滑动调节时间进度、单击显隐工具栏、双击播放/暂停、双指缩放位移、长按倍速。让网页版拥有原生 App 般的使用体验。
 // @author       RevenLiu
 // @license      MIT
 // @icon         https://raw.githubusercontent.com/RevenLiu/BiliTouch/main/Icon.png
@@ -33,14 +33,20 @@
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: black; opacity: 0; pointer-events: none; z-index: 1;
         }
+        .bpx-player-contextmenu.bpx-player-active { display: none !important; visibility: hidden !important; opacity: 0 !important; }
     `;
     document.head.appendChild(style);
 
     // 状态变量
     const TARGET = '.bpx-player-video-perch';
-    let clickTimer = null, touchStartX = 0, touchStartY = 0;
-    let baseTime = 0, targetTime = 0, baseVolume = 0, startOpacity = 0, currentOpacity = 0;
-    let gestureMode = null, isGestureMoving = false;
+    let clickTimer = null, longPressTimer = null, touchStartX = 0, touchStartY = 0;
+    let baseTime = 0, targetTime = 0, baseVolume = 0, startOpacity = 0;
+    let gestureMode = null, isGestureMoving = false, isLongPressing = false;
+    let lastGestureTime = 0; 
+
+    // 缩放状态
+    let scale = 1, lastScale = 1, translateX = 0, translateY = 0, lastPosX = 0, lastPosY = 0;
+    let startDistance = 0, startMidX = 0, startMidY = 0;
 
     // 工具函数
     const getEl = (id, parent, creator) => {
@@ -58,19 +64,21 @@
 
     const formatTime = (s) => isNaN(s) ? "00:00" : `${Math.floor(s/60).toString().padStart(2,'0')}:${Math.floor(s%60).toString().padStart(2,'0')}`;
 
+    const updateTransform = (v) => {
+        if (!v) return;
+        if (scale <= 1.01) { scale = 1; translateX = 0; translateY = 0; }
+        v.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+    };
+
     const toggleControls = () => {
         const container = document.querySelector('.bpx-player-container');
         const entity = document.querySelector('.bpx-player-control-entity');
         const pbp = document.querySelector('.bpx-player-pbp');
         if (!container || !entity) return;
-
         const isLocked = container.classList.toggle('my-force-show');
         container.setAttribute('data-ctrl-hidden', !isLocked);
         entity.setAttribute('data-shadow-show', !isLocked);
-        if (pbp) {
-            pbp.classList.toggle('show', isLocked);
-            window.dispatchEvent(new Event('resize'));
-        }
+        if (pbp) { pbp.classList.toggle('show', isLocked); window.dispatchEvent(new Event('resize')); }
     };
 
     // 手势逻辑
@@ -79,15 +87,32 @@
         const v = document.querySelector('video');
         if (!perch || !v) return;
 
-        touchStartX = e.touches[0].clientX;
-        touchStartY = e.touches[0].clientY;
-        baseTime = v.currentTime;
-        baseVolume = v.volume;
-        const overlay = document.getElementById('brightness-overlay');
-        startOpacity = overlay ? parseFloat(overlay.style.opacity) || 0 : 0;
-        
         gestureMode = null;
         isGestureMoving = false;
+
+        if (e.touches.length === 2) {
+            gestureMode = 'zoom';
+            startDistance = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+            startMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            startMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+            lastScale = scale; lastPosX = translateX; lastPosY = translateY;
+            clearTimeout(longPressTimer);
+        } else if (e.touches.length === 1) {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            baseTime = v.currentTime;
+            baseVolume = v.volume;
+            const overlay = document.getElementById('brightness-overlay');
+            startOpacity = overlay ? parseFloat(overlay.style.opacity) || 0 : 0;
+
+            longPressTimer = setTimeout(() => {
+                if (!isGestureMoving && !gestureMode && (Date.now() - lastGestureTime > 200)) {
+                    isLongPressing = true;
+                    v.playbackRate = 2.0;
+                    showHUD(">> 2.0X 倍速播放中");
+                }
+            }, 300);
+        }
     }, { passive: true });
 
     document.addEventListener('touchmove', (e) => {
@@ -95,58 +120,97 @@
         const v = document.querySelector('video');
         if (!perch || !v) return;
 
-        const deltaX = e.touches[0].clientX - touchStartX;
-        const deltaY = touchStartY - e.touches[0].clientY;
+        if (e.touches.length === 1 && (Date.now() - lastGestureTime < 200)) return;
 
-        if (!gestureMode) {
-            if (Math.abs(deltaX) > 20) gestureMode = 'progress';
-            else if (Math.abs(deltaY) > 20) gestureMode = touchStartX < (perch.offsetWidth / 2) ? 'brightness' : 'volume';
-        }
-
-        if (gestureMode) {
+        if (gestureMode === 'zoom' && e.touches.length === 2) {
             isGestureMoving = true;
+            const curDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+            const curMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            const curMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+            const zoomFactor = curDist / startDistance;
+            scale = Math.max(1, Math.min(4, lastScale * zoomFactor));
+            translateX = lastPosX + (curMidX - startMidX);
+            translateY = lastPosY + (curMidY - startMidY);
+            updateTransform(v);
+            showHUD(`缩放: ${Math.round(scale * 100)}%`);
             if (e.cancelable) e.preventDefault();
+        } 
+        else if (e.touches.length === 1) {
+            const deltaX = e.touches[0].clientX - touchStartX;
+            const deltaY = touchStartY - e.touches[0].clientY;
 
-            if (gestureMode === 'progress') {
-                const speed = 120 / (perch.offsetWidth || 500);
-                targetTime = Math.max(0, Math.min(v.duration, baseTime + deltaX * speed));
-                showHUD(`${deltaX > 0 ? '▶▶' : '◀◀'} ${formatTime(targetTime)} / ${formatTime(v.duration)}`);
-            } 
-            else if (gestureMode === 'volume') {
-                const volDelta = deltaY / (perch.offsetHeight || 300);
-                v.volume = Math.max(0, Math.min(1, baseVolume + volDelta));
-                showHUD(`🔊 音量: ${Math.round(v.volume * 100)}%`);
-            } 
-            else if (gestureMode === 'brightness') {
-                const sensitivity = 0.5; // 亮度调节灵敏度
-                const brightDelta = (deltaY / (perch.offsetHeight || 300)) * sensitivity;
-                currentOpacity = Math.max(0, Math.min(0.8, startOpacity - brightDelta));
-                const overlay = getEl('brightness-overlay', '.bpx-player-video-area', () => {
-                    const d = document.createElement('div'); d.id = 'brightness-overlay'; return d;
-                });
-                overlay.style.opacity = currentOpacity;
-                showHUD(`🔆 亮度: ${Math.round((1 - currentOpacity) * 100)}%`);
+            if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) clearTimeout(longPressTimer);
+
+            if (!gestureMode && !isLongPressing) {
+                if (scale > 1.01) {
+                    gestureMode = 'drag';
+                    lastPosX = translateX; lastPosY = translateY;
+                } else {
+                    if (Math.abs(deltaX) > 20) gestureMode = 'progress';
+                    else if (Math.abs(deltaY) > 20) gestureMode = touchStartX < (perch.offsetWidth / 2) ? 'brightness' : 'volume';
+                }
+            }
+
+            if (gestureMode) {
+                isGestureMoving = true;
+                if (e.cancelable) e.preventDefault();
+                if (gestureMode === 'drag') {
+                    translateX = lastPosX + (e.touches[0].clientX - touchStartX);
+                    translateY = lastPosY + (e.touches[0].clientY - touchStartY);
+                    updateTransform(v);
+                } else if (gestureMode === 'progress') {
+                    const speed = 120 / (perch.offsetWidth || 500);
+                    targetTime = Math.max(0, Math.min(v.duration, baseTime + deltaX * speed));
+                    showHUD(`${deltaX > 0 ? '▶▶' : '◀◀'} ${formatTime(targetTime)} / ${formatTime(v.duration)}`);
+                } else if (gestureMode === 'volume') {
+                    v.volume = Math.max(0, Math.min(1, baseVolume + (deltaY / (perch.offsetHeight || 300))));
+                    showHUD(`🔊 音量: ${Math.round(v.volume * 100)}%`);
+                } else if (gestureMode === 'brightness') {
+                    const currentOpacity = Math.max(0, Math.min(0.8, startOpacity - (deltaY / (perch.offsetHeight || 300)) * 0.5));
+                    const overlay = getEl('brightness-overlay', '.bpx-player-video-area', () => {
+                        const d = document.createElement('div'); d.id = 'brightness-overlay'; return d;
+                    });
+                    overlay.style.opacity = currentOpacity;
+                    showHUD(`🔆 亮度: ${Math.round((1 - currentOpacity) * 100)}%`);
+                }
             }
         }
     }, { passive: false });
 
-    document.addEventListener('touchend', () => {
-        if (isGestureMoving && gestureMode === 'progress') {
-            const v = document.querySelector('video');
-            if (v) v.currentTime = targetTime;
-            gestureMode = null;
+    document.addEventListener('touchend', (e) => {
+        clearTimeout(longPressTimer);
+        const v = document.querySelector('video');
+        
+        if (gestureMode === 'zoom' || gestureMode === 'drag') {
+            lastGestureTime = Date.now();
         }
+
+        if (isLongPressing) {
+            isLongPressing = false;
+            if (v) v.playbackRate = 1.0;
+        }
+
+        if (isGestureMoving && gestureMode === 'progress') {
+            if (v) v.currentTime = targetTime;
+        }
+        
         const hud = document.getElementById('gesture-hud');
         if (hud) hud.style.display = 'none';
+        
+        if (e.touches.length === 0) {
+            gestureMode = null;
+        }
     }, { passive: true });
 
     // 点击与冲突拦截
     document.addEventListener('click', (e) => {
         const perch = e.target.closest(TARGET);
         if (!perch) return;
-
-        if (isGestureMoving) { isGestureMoving = false; e.stopImmediatePropagation(); e.preventDefault(); return; }
-
+        if (isGestureMoving || isLongPressing || (Date.now() - lastGestureTime < 200)) { 
+            isGestureMoving = false; 
+            e.stopImmediatePropagation(); e.preventDefault(); 
+            return; 
+        }
         e.stopImmediatePropagation(); e.preventDefault();
         if (clickTimer) {
             clearTimeout(clickTimer); clickTimer = null;
@@ -154,6 +218,11 @@
         } else {
             clickTimer = setTimeout(() => { clickTimer = null; toggleControls(); }, 250);
         }
+    }, true);
+
+    // 屏蔽右键菜单
+    document.addEventListener('contextmenu', (e) => {
+        if (e.target.closest(TARGET)) { e.preventDefault(); e.stopImmediatePropagation(); }
     }, true);
 
     document.addEventListener('dblclick', (e) => {
@@ -166,5 +235,4 @@
         if (btn) { btn.click(); obs.disconnect(); }
     });
     observer.observe(document.body, { childList: true, subtree: true });
-
 })();
