@@ -12,6 +12,10 @@
   
 - 替换原生交互逻辑，单击显隐工具栏，双击播放/暂停。
 
+- 双指缩放及自由拖拽
+
+- 按住倍速播放
+
 ## 🔍 安装方式
 - 安装 [Tampermonkey 插件](https://www.tampermonkey.net/)
 - 点击此处[安装脚本](https://greasyfork.org/zh-CN/scripts/559978-bilitouch) 或 [下载](./BiliTouch.js)并手动导入
