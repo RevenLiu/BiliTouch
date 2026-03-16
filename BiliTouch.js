@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliTouch
 // @namespace    https://github.com/RevenLiu
-// @version      1.1.0
+// @version      1.1.1
 // @description  一个为移动端打造的Web端B站网页播放器交互重构的篡改猴脚本。支持两侧滑动调节亮度与音量、横向滑动调节时间进度、单击显隐工具栏、双击播放/暂停、双指缩放位移、长按倍速。让网页版拥有原生 App 般的使用体验。
 // @author       RevenLiu
 // @license      MIT
@@ -10,11 +10,16 @@
 // @supportURL   https://github.com/RevenLiu/BiliTouch/issues
 // @match        *://www.bilibili.com/video/*
 // @match        *://www.bilibili.com/bangumi/*
+// @match        *://live.bilibili.com/*
 // @grant        none
 // ==/UserScript==
 
 (function() {
     'use strict';
+
+    const IS_LIVE = location.hostname === 'live.bilibili.com';
+    const TARGET = IS_LIVE ? '.live-player-mounter' : '.bpx-player-video-perch';
+    const AREA = IS_LIVE ? '.live-player-mounter' : '.bpx-player-video-area';
 
     // 样式与 UI 注入
     const style = document.createElement('style');
@@ -23,7 +28,7 @@
             opacity: 1 !important; visibility: visible !important; display: block !important;
         }
         .bpx-player-pbp:not(.show) { pointer-events: none !important; }
-        .bpx-player-video-perch { touch-action: none !important; -webkit-tap-highlight-color: transparent !important; }
+        ${TARGET} { touch-action: none !important; -webkit-tap-highlight-color: transparent !important; }
         #gesture-hud {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             background: rgba(0,0,0,0.75); color: #fff; padding: 12px 24px; border-radius: 10px;
@@ -38,7 +43,6 @@
     document.head.appendChild(style);
 
     // 状态变量
-    const TARGET = '.bpx-player-video-perch';
     let clickTimer = null, longPressTimer = null, touchStartX = 0, touchStartY = 0;
     let baseTime = 0, targetTime = 0, baseVolume = 0, startOpacity = 0;
     let gestureMode = null, isGestureMoving = false, isLongPressing = false;
@@ -56,7 +60,7 @@
     };
 
     const showHUD = (text) => {
-        const hud = getEl('gesture-hud', '.bpx-player-video-area', () => {
+        const hud = getEl('gesture-hud', AREA, () => {
             const d = document.createElement('div'); d.id = 'gesture-hud'; return d;
         });
         hud.innerText = text; hud.style.display = 'block';
@@ -71,6 +75,7 @@
     };
 
     const toggleControls = () => {
+        if (IS_LIVE) return;
         const container = document.querySelector('.bpx-player-container');
         const entity = document.querySelector('.bpx-player-control-entity');
         const pbp = document.querySelector('.bpx-player-pbp');
@@ -105,13 +110,15 @@
             const overlay = document.getElementById('brightness-overlay');
             startOpacity = overlay ? parseFloat(overlay.style.opacity) || 0 : 0;
 
-            longPressTimer = setTimeout(() => {
-                if (!isGestureMoving && !gestureMode && (Date.now() - lastGestureTime > 200)) {
-                    isLongPressing = true;
-                    v.playbackRate = 2.0;
-                    showHUD(">> 2.0X 倍速播放中");
-                }
-            }, 300);
+            if (!IS_LIVE) {
+                longPressTimer = setTimeout(() => {
+                    if (!isGestureMoving && !gestureMode && (Date.now() - lastGestureTime > 200)) {
+                        isLongPressing = true;
+                        v.playbackRate = 2.0;
+                        showHUD(">> 2.0X 倍速播放中");
+                    }
+                }, 300);
+            }
         }
     }, { passive: true });
 
@@ -146,7 +153,7 @@
                     gestureMode = 'drag';
                     lastPosX = translateX; lastPosY = translateY;
                 } else {
-                    if (Math.abs(deltaX) > 20) gestureMode = 'progress';
+                    if (!IS_LIVE && Math.abs(deltaX) > 20) gestureMode = 'progress';
                     else if (Math.abs(deltaY) > 20) gestureMode = touchStartX < (perch.offsetWidth / 2) ? 'brightness' : 'volume';
                 }
             }
@@ -167,7 +174,7 @@
                     showHUD(`🔊 音量: ${Math.round(v.volume * 100)}%`);
                 } else if (gestureMode === 'brightness') {
                     const currentOpacity = Math.max(0, Math.min(0.8, startOpacity - (deltaY / (perch.offsetHeight || 300)) * 0.5));
-                    const overlay = getEl('brightness-overlay', '.bpx-player-video-area', () => {
+                    const overlay = getEl('brightness-overlay', AREA, () => {
                         const d = document.createElement('div'); d.id = 'brightness-overlay'; return d;
                     });
                     overlay.style.opacity = currentOpacity;
@@ -205,7 +212,8 @@
     // 点击与冲突拦截
     document.addEventListener('click', (e) => {
         const perch = e.target.closest(TARGET);
-        if (!perch) return;
+        if (!perch || IS_LIVE) return; // 直播页跳过单击拦截
+
         if (isGestureMoving || isLongPressing || (Date.now() - lastGestureTime < 200)) { 
             isGestureMoving = false; 
             e.stopImmediatePropagation(); e.preventDefault(); 
@@ -225,14 +233,24 @@
         if (e.target.closest(TARGET)) { e.preventDefault(); e.stopImmediatePropagation(); }
     }, true);
 
+    // 处理直播页双击 (暂停/播放)
     document.addEventListener('dblclick', (e) => {
-        if (e.target.closest(TARGET)) { e.stopImmediatePropagation(); e.preventDefault(); }
+        if (e.target.closest(TARGET)) { 
+            e.stopImmediatePropagation(); 
+            e.preventDefault(); 
+            if (IS_LIVE) {
+                const v = document.querySelector('video');
+                if (v) v.paused ? v.play() : v.pause();
+            }
+        }
     }, true);
 
     // 自动化宽屏
-    const observer = new MutationObserver((_, obs) => {
-        const btn = document.querySelector('.bpx-player-ctrl-wide-enter');
-        if (btn) { btn.click(); obs.disconnect(); }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
+    if (!IS_LIVE) {
+        const observer = new MutationObserver((_, obs) => {
+            const btn = document.querySelector('.bpx-player-ctrl-wide-enter');
+            if (btn) { btn.click(); obs.disconnect(); }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
 })();
