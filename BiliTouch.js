@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BiliTouch
 // @namespace    https://github.com/RevenLiu
-// @version      1.1.3
+// @version      1.1.4
 // @description  一个为移动端打造的Web端B站网页播放器交互重构的篡改猴脚本。支持两侧滑动调节亮度与音量、横向滑动调节时间进度、单击显隐工具栏、双击播放/暂停、双指缩放位移、长按倍速。让网页版拥有原生 App 般的使用体验。
 // @author       RevenLiu
 // @license      MIT
@@ -35,6 +35,7 @@
             background: rgba(0,0,0,0.75); color: #fff; padding: 12px 24px; border-radius: 10px;
             z-index: 999999; display: none; pointer-events: none; font-size: 20px; font-weight: bold; text-align: center;
         }
+        #gesture-hud.top-style { top: 40px; transform: translate(-50%, 0); padding: 6px 16px; font-size: 14px; background: rgba(0,0,0,0.5); }
         #brightness-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: black; opacity: 0; pointer-events: none; z-index: 1000000;
@@ -60,11 +61,13 @@
         return el;
     };
 
-    const showHUD = (text) => {
+    const showHUD = (text, isTop = false) => {
         const hud = getEl('gesture-hud', AREA, () => {
             const d = document.createElement('div'); d.id = 'gesture-hud'; return d;
         });
-        hud.innerText = text; hud.style.display = 'block';
+        hud.innerText = text; 
+        hud.classList.toggle('top-style', isTop);
+        hud.style.display = 'block';
     };
 
     const formatTime = (s) => isNaN(s) ? "00:00" : `${Math.floor(s/60).toString().padStart(2,'0')}:${Math.floor(s%60).toString().padStart(2,'0')}`;
@@ -116,7 +119,7 @@
                     if (!isGestureMoving && !gestureMode && (Date.now() - lastGestureTime > 200)) {
                         isLongPressing = true;
                         v.playbackRate = 2.0;
-                        showHUD(">> 2.0X 倍速播放中");
+                        showHUD(">> 2.0X 倍速播放中", true);
                     }
                 }, 300);
             }
@@ -203,7 +206,10 @@
         }
         
         const hud = document.getElementById('gesture-hud');
-        if (hud) hud.style.display = 'none';
+        if (hud) {
+            hud.style.display = 'none';
+            hud.classList.remove('top-style');
+        }
         
         if (e.touches.length === 0) {
             gestureMode = null;
